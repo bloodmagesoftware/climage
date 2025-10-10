@@ -1,7 +1,4 @@
-CLImage is a CLI tool, written in modern Go that generates images from text prompts.
-
-Add the following header to every source file with comments, followed by a blank line:
-```
+/*
 CLImage is a AI image generation CLI tool.
 Copyright (C) 2025  Mayer & Ott GbR
 
@@ -17,8 +14,32 @@ GNU Affero General Public License for more details.
 
 You should have received a copy of the GNU Affero General Public Licen
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
-```
+*/
 
-It is similar to [SST OpenCode](https://github.com/sst/opencode) but for images.
+package cmd
 
-Make sure every cobra command has a short and long description.
+import (
+	"os"
+
+	"github.com/spf13/cobra"
+)
+
+var rootCmd = &cobra.Command{
+	Use:   "climage",
+	Short: "",
+	Long:  ``,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		return nil
+	},
+}
+
+func Execute() {
+	err := rootCmd.Execute()
+	if err != nil {
+		os.Exit(1)
+	}
+}
+
+func init() {
+	rootCmd.SilenceUsage = true
+}
