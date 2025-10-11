@@ -27,7 +27,6 @@ import (
 	"strconv"
 
 	"github.com/bloodmagesoftware/climage/providers"
-	"github.com/zalando/go-keyring"
 )
 
 func getConfigFilePath() (string, error) {
@@ -133,20 +132,6 @@ func (cfg Config) GetDefaultModelSettingBool(setting string) (bool, bool) {
 		return false, false
 	}
 	return b, true
-}
-
-const keyringServiceName = "climage"
-
-func SetProviderAPIKey(providerName string, apiKey string) error {
-	return keyring.Set(keyringServiceName, providerName, apiKey)
-}
-
-func GetProviderAPIKey(providerName string) (string, error) {
-	return keyring.Get(keyringServiceName, providerName)
-}
-
-func DeleteProviderAPIKey(providerName string) error {
-	return keyring.Delete(keyringServiceName, providerName)
 }
 
 func (cfg Config) GetModels() iter.Seq2[string, providers.Model] {

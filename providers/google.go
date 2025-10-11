@@ -52,9 +52,44 @@ func (p *GoogleProvider) GetName() string {
 	return "google"
 }
 
-func (p *GoogleProvider) Login(ctx context.Context, apiKey string) error {
+func (p *GoogleProvider) GetLoginFields() []LoginField {
+	return []LoginField{
+		{
+			Name:        "api_key",
+			DisplayName: "API Key",
+			Type:        "string",
+			Secret:      true,
+		},
+	}
+}
+
+func (p *GoogleProvider) SaveCredentials(credentials map[string]string) error {
+	apiKey, ok := credentials["api_key"]
+	if !ok {
+		return fmt.Errorf("api_key not provided")
+	}
+	return keyring.Set(keyringServiceName, "google", apiKey)
+}
+
+func (p *GoogleProvider) LoadCredentials() (map[string]string, error) {
+	apiKey, err := keyring.Get(keyringServiceName, "google")
+	if err != nil {
+		return nil, fmt.Errorf("not logged in to Google")
+	}
+	return map[string]string{"api_key": apiKey}, nil
+}
+
+func (p *GoogleProvider) DeleteCredentials() error {
+	return keyring.Delete(keyringServiceName, "google")
+}
+
+func (p *GoogleProvider) Login(ctx context.Context, credentials map[string]string) error {
 	if p.client != nil {
 		return nil
+	}
+	apiKey, ok := credentials["api_key"]
+	if !ok {
+		return fmt.Errorf("api_key not provided")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
@@ -75,11 +110,11 @@ func (p *GoogleProvider) Close() error {
 
 func (p *GoogleProvider) GenerateImage(ctx context.Context, model string, prompt string, settings ModelSettings) ([]string, error) {
 	if p.client == nil {
-		key, err := keyring.Get(keyringServiceName, "google")
+		credentials, err := p.LoadCredentials()
 		if err != nil {
-			return nil, fmt.Errorf("not logged in to Google")
+			return nil, err
 		}
-		if err := p.Login(ctx, key); err != nil {
+		if err := p.Login(ctx, credentials); err != nil {
 			return nil, fmt.Errorf("failed to login to Google: %w", err)
 		}
 	}

@@ -189,9 +189,20 @@ const (
 
 const keyringServiceName = "climage"
 
+type LoginField struct {
+	Name        string
+	DisplayName string
+	Type        string
+	Secret      bool
+}
+
 type Provider interface {
 	GetName() string
-	Login(ctx context.Context, apiKey string) error
+	GetLoginFields() []LoginField
+	SaveCredentials(credentials map[string]string) error
+	LoadCredentials() (map[string]string, error)
+	DeleteCredentials() error
+	Login(ctx context.Context, credentials map[string]string) error
 	GenerateImage(ctx context.Context, model string, prompt string, settings ModelSettings) ([]string, error)
 	GetModels() []Model
 	GetModelSettings(model string) []ModelSetting

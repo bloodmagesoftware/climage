@@ -36,7 +36,7 @@ var authCmd = &cobra.Command{
 var authLoginCmd = &cobra.Command{
 	Use:   "login",
 	Short: "Login to a provider",
-	Long:  `Login to an image generation provider by providing your API key. This allows CLImage to generate images using the selected provider.`,
+	Long:  `Login to an image generation provider by providing your credentials. This allows CLImage to generate images using the selected provider.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var providerNames []string
 
@@ -49,7 +49,6 @@ var authLoginCmd = &cobra.Command{
 		for _, a := range providers.GetProviderNames() {
 			for _, b := range cfg.Providers {
 				if a == b.Name {
-					// skip already added providers
 					continue full_provider_list
 				}
 			}
@@ -61,7 +60,6 @@ var authLoginCmd = &cobra.Command{
 		}
 
 		providerName := providerNames[0]
-		apiKey := ""
 
 		if err := huh.NewForm(huh.NewGroup(
 			huh.NewSelect[string]().
@@ -70,22 +68,48 @@ var authLoginCmd = &cobra.Command{
 				Options(huh.NewOptions(providerNames...)...).
 				Validate(huh.ValidateNotEmpty()).
 				Value(&providerName),
-			huh.NewInput().
-				Title("API Key").
-				Description("Enter your API key.").
-				Validate(huh.ValidateNotEmpty()).
-				Value(&apiKey).
-				EchoMode(huh.EchoModePassword),
 		)).Run(); err != nil {
+			return fmt.Errorf("failed to run provider selection: %w", err)
+		}
+
+		provider, err := providers.GetProviderByName(providerName)
+		if err != nil {
+			return fmt.Errorf("failed to get provider: %w", err)
+		}
+
+		loginFields := provider.GetLoginFields()
+		credentials := make(map[string]string)
+		credentialValues := make(map[string]*string)
+		var formFields []huh.Field
+
+		for _, field := range loginFields {
+			value := ""
+			credentialValues[field.Name] = &value
+			input := huh.NewInput().
+				Title(field.DisplayName).
+				Validate(huh.ValidateNotEmpty()).
+				Value(credentialValues[field.Name])
+			if field.Secret {
+				input = input.EchoMode(huh.EchoModePassword)
+			}
+			formFields = append(formFields, input)
+		}
+
+		if err := huh.NewForm(huh.NewGroup(formFields...)).Run(); err != nil {
 			return fmt.Errorf("failed to run login form: %w", err)
+		}
+
+		for name, valuePtr := range credentialValues {
+			credentials[name] = *valuePtr
+		}
+
+		if err := provider.SaveCredentials(credentials); err != nil {
+			return fmt.Errorf("failed to save credentials: %w", err)
 		}
 
 		cfg.Providers = append(cfg.Providers, config.Provider{
 			providerName,
 		})
-		if err := config.SetProviderAPIKey(providerName, apiKey); err != nil {
-			return fmt.Errorf("failed to set API key: %w", err)
-		}
 		if err = cfg.Save(); err != nil {
 			return fmt.Errorf("failed to save config: %w", err)
 		}
@@ -124,6 +148,15 @@ var authLogoutCmd = &cobra.Command{
 			return fmt.Errorf("failed to run logout form: %w", err)
 		}
 
+		provider, err := providers.GetProviderByName(providerName)
+		if err != nil {
+			return fmt.Errorf("failed to get provider: %w", err)
+		}
+
+		if err := provider.DeleteCredentials(); err != nil {
+			return fmt.Errorf("failed to delete credentials: %w", err)
+		}
+
 		newProviders := make([]config.Provider, 0, len(cfg.Providers)-1)
 		for _, p := range cfg.Providers {
 			if p.Name != providerName {
@@ -131,10 +164,6 @@ var authLogoutCmd = &cobra.Command{
 			}
 		}
 		cfg.Providers = newProviders
-
-		if err := config.DeleteProviderAPIKey(providerName); err != nil {
-			return fmt.Errorf("failed to delete API key: %w", err)
-		}
 
 		if err = cfg.Save(); err != nil {
 			return fmt.Errorf("failed to save config: %w", err)
