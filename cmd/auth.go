@@ -29,8 +29,8 @@ import (
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
-	Short: "",
-	Long:  ``,
+	Short: "Manage authentication with image generation providers",
+	Long:  `Manage authentication credentials for image generation providers. Use 'login' to add a new provider or 'logout' to remove an existing one.`,
 }
 
 var authLoginCmd = &cobra.Command{

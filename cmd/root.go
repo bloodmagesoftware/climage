@@ -38,8 +38,8 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "climage",
-	Short: "",
-	Long:  ``,
+	Short: "Generate images from text prompts using AI",
+	Long:  `CLImage is a command-line tool for generating images from text prompts using various AI providers. Run without arguments to start an interactive session where you can enter prompts, switch models, adjust settings, and view generated images.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.GetConfig()
 		if err != nil {
@@ -49,6 +49,7 @@ var rootCmd = &cobra.Command{
 		errExit := errors.New("exit")
 
 		prompt := ""
+		lastPrompt := ""
 		model := cfg.DefaultModel
 		var modelSettings providers.ModelSettings
 
@@ -118,7 +119,15 @@ var rootCmd = &cobra.Command{
 			case "/exit":
 				return errExit
 
+			case "/retry":
+				prompt = lastPrompt
+				fallthrough
+
 			default:
+				if strings.HasPrefix(prompt, "/") {
+					fmt.Printf("invalid command: %q\n", prompt)
+					break
+				}
 				modelParts := strings.SplitN(model, "/", 2)
 				if len(modelParts) != 2 {
 					return fmt.Errorf("invalid model: %q", model)
@@ -134,6 +143,7 @@ var rootCmd = &cobra.Command{
 				if err != nil {
 					return fmt.Errorf("failed to generate image: %w", err)
 				}
+				lastPrompt = prompt
 				log.Println(prompt)
 				for _, filePath := range out {
 					fmt.Println(filePath)
