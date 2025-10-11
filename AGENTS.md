@@ -22,3 +22,6 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 It is similar to [SST OpenCode](https://github.com/sst/opencode) but for images.
 
 Make sure every cobra command has a short and long description.
+
+The AI providers should be abstracted to enable adding new providers easily.
+Every model has its own settings.

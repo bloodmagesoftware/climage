@@ -19,8 +19,20 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 package cmd
 
 import (
+	"errors"
+	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
+	"log"
 	"os"
+	"os/exec"
+	"strings"
 
+	"github.com/bloodmagesoftware/climage/config"
+	"github.com/bloodmagesoftware/climage/providers"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
 
@@ -29,6 +41,130 @@ var rootCmd = &cobra.Command{
 	Short: "",
 	Long:  ``,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.GetConfig()
+		if err != nil {
+			return fmt.Errorf("failed to get config: %w", err)
+		}
+
+		errExit := errors.New("exit")
+
+		prompt := ""
+		model := cfg.DefaultModel
+		var modelSettings providers.ModelSettings
+
+		// check if default model is valid
+		{
+			found := false
+			for modelName, pm := range cfg.GetModels() {
+				if model == modelName {
+					found = true
+					modelSettings = pm.Settings
+					break
+				}
+			}
+			// if not found, set to first provider's default model
+			if !found {
+				model = ""
+				for modelName, pm := range cfg.GetModels() {
+					model = modelName
+					modelSettings = pm.Settings
+					break
+				}
+			}
+		}
+		if model == "" {
+			return fmt.Errorf("no model is available")
+		}
+
+		run := func() error {
+			if err := huh.NewForm(huh.NewGroup(
+				huh.NewText().
+					Title("Prompt").
+					Description("Enter your prompt for " + model + ".").
+					Validate(huh.ValidateNotEmpty()).
+					Value(&prompt),
+			)).Run(); err != nil {
+				return fmt.Errorf("failed to run prompt form: %w", err)
+			}
+
+			switch prompt {
+			case "/models":
+				var modelOptions []huh.Option[string]
+				for modelName, model := range cfg.GetModels() {
+					modelOptions = append(modelOptions, huh.NewOption(model.DisplayName, modelName))
+				}
+				if err := huh.NewForm(huh.NewGroup(
+					huh.NewSelect[string]().
+						Title("Model").
+						Description("Select a model to generate an image with.").
+						Options(modelOptions...).
+						Value(&model),
+				)).Run(); err != nil {
+					return fmt.Errorf("failed to run model form: %w", err)
+				}
+				// update model settings
+				for modelName, model := range cfg.GetModels() {
+					if model.Name == modelName {
+						modelSettings = model.Settings
+						break
+					}
+				}
+
+			case "/settings":
+				if err := huh.NewForm(modelSettings.HuhGroup()).Run(); err != nil {
+					return fmt.Errorf("failed to run settings form: %w", err)
+				}
+
+			case "/exit":
+				return errExit
+
+			default:
+				modelParts := strings.SplitN(model, "/", 2)
+				if len(modelParts) != 2 {
+					return fmt.Errorf("invalid model: %q", model)
+				}
+				providerName := modelParts[0]
+				modelName := modelParts[1]
+
+				pp, err := providers.GetProviderByName(providerName)
+				if err != nil {
+					return fmt.Errorf("failed to get provider: %w", err)
+				}
+				out, err := pp.GenerateImage(cmd.Context(), modelName, prompt, modelSettings)
+				if err != nil {
+					return fmt.Errorf("failed to generate image: %w", err)
+				}
+				log.Println(prompt)
+				for _, filePath := range out {
+					fmt.Println(filePath)
+					ar := aspectRatio(filePath)
+					width := int(float64(40) * ar)
+					height := int(float64(40) / ar)
+					cmd := exec.Command("viu", "--width", fmt.Sprintf("%d", width), "--height", fmt.Sprintf("%d", height), filePath)
+					cmd.Stdin = os.Stdin
+					cmd.Stdout = os.Stdout
+					cmd.Stderr = os.Stderr
+					cmd.Run()
+				}
+			}
+
+			return nil
+		}
+
+		for {
+			if err := run(); err != nil {
+				if errors.Is(err, errExit) {
+					break
+				}
+				// is huh user abort
+				if errors.Is(err, huh.ErrUserAborted) {
+					break
+				}
+				return err
+			}
+			prompt = ""
+		}
+
 		return nil
 	},
 }
@@ -42,4 +178,22 @@ func Execute() {
 
 func init() {
 	rootCmd.SilenceUsage = true
+}
+
+func aspectRatio(imageFilePath string) float64 {
+	b := bounds(imageFilePath)
+	return float64(b.Dx()) / float64(b.Dy())
+}
+
+func bounds(imageFilePath string) image.Rectangle {
+	f, err := os.Open(imageFilePath)
+	if err != nil {
+		return image.Rectangle{}
+	}
+	defer f.Close()
+	img, _, err := image.Decode(f)
+	if err != nil {
+		return image.Rectangle{}
+	}
+	return img.Bounds()
 }

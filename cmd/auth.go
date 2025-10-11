@@ -38,29 +38,48 @@ var authLoginCmd = &cobra.Command{
 	Short: "Login to a provider",
 	Long:  `Login to an image generation provider by providing your API key. This allows CLImage to generate images using the selected provider.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		providerName := providers.GetProviders()[0]
+		var providerNames []string
+
+		cfg, err := config.GetConfig()
+		if err != nil {
+			return fmt.Errorf("failed to get config: %w", err)
+		}
+
+	full_provider_list:
+		for _, a := range providers.GetProviderNames() {
+			for _, b := range cfg.Providers {
+				if a == b.Name {
+					// skip already added providers
+					continue full_provider_list
+				}
+			}
+			providerNames = append(providerNames, a)
+		}
+
+		if len(providerNames) == 0 {
+			return fmt.Errorf("no providers are available")
+		}
+
+		providerName := providerNames[0]
 		apiKey := ""
 
 		if err := huh.NewForm(huh.NewGroup(
 			huh.NewSelect[string]().
 				Title("Provider").
 				Description("Select a provider to login with.").
-				Options(huh.NewOptions(providers.GetProviders()...)...).
+				Options(huh.NewOptions(providerNames...)...).
 				Validate(huh.ValidateNotEmpty()).
 				Value(&providerName),
 			huh.NewInput().
 				Title("API Key").
 				Description("Enter your API key.").
 				Validate(huh.ValidateNotEmpty()).
-				Value(&apiKey),
+				Value(&apiKey).
+				EchoMode(huh.EchoModePassword),
 		)).Run(); err != nil {
 			return fmt.Errorf("failed to run login form: %w", err)
 		}
 
-		cfg, err := config.GetConfig()
-		if err != nil {
-			return fmt.Errorf("failed to get config: %w", err)
-		}
 		cfg.Providers = append(cfg.Providers, config.Provider{
 			providerName,
 		})

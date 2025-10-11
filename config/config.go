@@ -21,9 +21,12 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"iter"
 	"os"
 	"path/filepath"
+	"strconv"
 
+	"github.com/bloodmagesoftware/climage/providers"
 	"github.com/zalando/go-keyring"
 )
 
@@ -36,11 +39,22 @@ func getConfigFilePath() (string, error) {
 }
 
 type Config struct {
-	Providers []Provider
+	Providers            []Provider        `json:"providers"`
+	DefaultModel         string            `json:"default_model"`
+	DefaultModelSettings map[string]string `json:"default_model_settings"`
 }
 
 type Provider struct {
-	Name string
+	Name string `json:"name"`
+}
+
+func (p Provider) Get() (providers.Provider, error) {
+	for _, pp := range providers.Providers {
+		if pp.GetName() == p.Name {
+			return pp, nil
+		}
+	}
+	return nil, fmt.Errorf("provider %q not found", p.Name)
 }
 
 func GetConfig() (Config, error) {
@@ -62,10 +76,19 @@ func GetConfig() (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("failed to decode config: %w", err)
 	}
+
+	// apply user default model settings
+	for _, m := range config.GetModels() {
+		for _, s := range m.Settings {
+			if v, ok := config.GetDefaultModelSetting(s.Name); ok && providers.IsOfType(v, s.Type) {
+				s.Value = v
+			}
+		}
+	}
 	return config, nil
 }
 
-func (c Config) Save() error {
+func (cfg Config) Save() error {
 	userConfigPath, err := getConfigFilePath()
 	if err != nil {
 		return fmt.Errorf("failed to get config file path: %w", err)
@@ -76,11 +99,40 @@ func (c Config) Save() error {
 		return fmt.Errorf("failed to create config file: %w", err)
 	}
 	defer f.Close()
-	err = json.NewEncoder(f).Encode(c)
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "\t")
+	err = enc.Encode(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 	return nil
+}
+
+func (cfg Config) GetDefaultModelSetting(setting string) (string, bool) {
+	v, ok := cfg.DefaultModelSettings[setting]
+	return v, ok
+}
+func (cfg Config) GetDefaultModelSettingInt(setting string) (int, bool) {
+	v, ok := cfg.DefaultModelSettings[setting]
+	if !ok {
+		return 0, false
+	}
+	i, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, false
+	}
+	return i, true
+}
+func (cfg Config) GetDefaultModelSettingBool(setting string) (bool, bool) {
+	v, ok := cfg.DefaultModelSettings[setting]
+	if !ok {
+		return false, false
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return false, false
+	}
+	return b, true
 }
 
 const keyringServiceName = "climage"
@@ -95,4 +147,20 @@ func GetProviderAPIKey(providerName string) (string, error) {
 
 func DeleteProviderAPIKey(providerName string) error {
 	return keyring.Delete(keyringServiceName, providerName)
+}
+
+func (cfg Config) GetModels() iter.Seq2[string, providers.Model] {
+	return func(yield func(string, providers.Model) bool) {
+		for _, p := range cfg.Providers {
+			pp, err := p.Get()
+			if err != nil {
+				return
+			}
+			for _, m := range pp.GetModels() {
+				if !yield(pp.GetName()+"/"+m.Name, m) {
+					return
+				}
+			}
+		}
+	}
 }

@@ -18,8 +18,12 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 package main
 
-import "github.com/bloodmagesoftware/climage/cmd"
+import (
+	"github.com/bloodmagesoftware/climage/cmd"
+	"github.com/bloodmagesoftware/climage/providers"
+)
 
 func main() {
+	defer providers.Close()
 	cmd.Execute()
 }
