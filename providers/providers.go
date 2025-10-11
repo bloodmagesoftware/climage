@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -248,4 +249,12 @@ func getOutDir() (string, error) {
 		return "", fmt.Errorf("failed to get user downloads dir: %w", err)
 	}
 	return filepath.Join(dir, "climage"), nil
+}
+
+func getDataDir() (string, error) {
+	userDataDir, err := os.UserConfigDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get user config dir: %w", err)
+	}
+	return filepath.Join(userDataDir, "climage", "data"), nil
 }

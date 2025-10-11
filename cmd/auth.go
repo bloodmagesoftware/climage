@@ -19,7 +19,10 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 package cmd
 
 import (
+	"encoding/base64"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/bloodmagesoftware/climage/config"
 	"github.com/bloodmagesoftware/climage/providers"
@@ -85,22 +88,57 @@ var authLoginCmd = &cobra.Command{
 		for _, field := range loginFields {
 			value := ""
 			credentialValues[field.Name] = &value
-			input := huh.NewInput().
-				Title(field.DisplayName).
-				Validate(huh.ValidateNotEmpty()).
-				Value(credentialValues[field.Name])
-			if field.Secret {
-				input = input.EchoMode(huh.EchoModePassword)
+			if field.Type == "file" {
+				currentDirectory := "."
+				if homeDir, err := os.UserHomeDir(); err == nil {
+					currentDirectory = homeDir
+				}
+				formFields = append(formFields, huh.NewFilePicker().
+					DirAllowed(false).
+					ShowHidden(false).
+					Title(field.DisplayName).
+					Validate(huh.ValidateNotEmpty()).
+					CurrentDirectory(currentDirectory).
+					Value(credentialValues[field.Name]))
+			} else {
+				input := huh.NewInput().
+					Title(field.DisplayName).
+					Validate(huh.ValidateNotEmpty()).
+					Value(credentialValues[field.Name])
+				if field.Secret {
+					input = input.EchoMode(huh.EchoModePassword)
+				}
+				formFields = append(formFields, input)
 			}
-			formFields = append(formFields, input)
 		}
 
 		if err := huh.NewForm(huh.NewGroup(formFields...)).Run(); err != nil {
 			return fmt.Errorf("failed to run login form: %w", err)
 		}
 
+		for _, field := range loginFields {
+			if field.Type == "file" && credentialValues[field.Name] != nil {
+				// read file contents
+				f, err := os.Open(*credentialValues[field.Name])
+				if err != nil {
+					return fmt.Errorf("failed to open file: %w", err)
+				}
+				b, err := io.ReadAll(f)
+				_ = f.Close()
+				if err != nil {
+					return fmt.Errorf("failed to read file: %w", err)
+				}
+				b64 := base64.StdEncoding.EncodeToString(b)
+				credentialValues[field.Name] = &b64
+			}
+		}
+
 		for name, valuePtr := range credentialValues {
 			credentials[name] = *valuePtr
+		}
+
+		if err := provider.Login(cmd.Context(), credentials); err != nil {
+			return fmt.Errorf("failed to login with provided credentials: %w", err)
 		}
 
 		if err := provider.SaveCredentials(credentials); err != nil {

@@ -20,11 +20,14 @@ package providers
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
+	"cloud.google.com/go/auth/credentials"
 	"github.com/zalando/go-keyring"
 	"google.golang.org/genai"
 )
@@ -32,6 +35,7 @@ import (
 var googleSettings = ModelSettings{
 	{DisplayName: "Number of Images", Name: "number_of_images", Type: "int", DefaultValue: "1"},
 	{DisplayName: "Aspect Ratio", Name: "aspect_ratio", Type: "enum:1:1|16:9|4:3|9:16|3:4", DefaultValue: "1:1"},
+	{DisplayName: "Output Resolution", Name: "output_resolution", Type: "enum:1K|2K", DefaultValue: "1K"},
 }
 
 var GoogleModels = []Model{
@@ -55,46 +59,147 @@ func (p *GoogleProvider) GetName() string {
 func (p *GoogleProvider) GetLoginFields() []LoginField {
 	return []LoginField{
 		{
-			Name:        "api_key",
-			DisplayName: "API Key",
+			Name:        "service_account_key",
+			DisplayName: "Service Account Key File",
+			Type:        "file",
+			Secret:      false,
+		},
+		{
+			Name:        "project_id",
+			DisplayName: "Project ID",
 			Type:        "string",
-			Secret:      true,
+			Secret:      false,
+		},
+		{
+			Name:        "location",
+			DisplayName: "Location",
+			Type:        "string",
+			Secret:      false,
 		},
 	}
 }
 
+type googleCredentials struct {
+	ProjectID string `json:"project_id"`
+	Location  string `json:"location"`
+}
+
 func (p *GoogleProvider) SaveCredentials(credentials map[string]string) error {
-	apiKey, ok := credentials["api_key"]
+	serviceAccountKeyB64, ok := credentials["service_account_key"]
 	if !ok {
-		return fmt.Errorf("api_key not provided")
+		return fmt.Errorf("service_account_key not provided")
 	}
-	return keyring.Set(keyringServiceName, "google", apiKey)
+	serviceAccountKey, err := base64.StdEncoding.DecodeString(serviceAccountKeyB64)
+	if err != nil {
+		return fmt.Errorf("failed to decode service account key: %w", err)
+	}
+	projectID, ok := credentials["project_id"]
+	if !ok {
+		return fmt.Errorf("project_id not provided")
+	}
+	location, ok := credentials["location"]
+	if !ok {
+		return fmt.Errorf("location not provided")
+	}
+
+	dataDir, err := getDataDir()
+	if err != nil {
+		return fmt.Errorf("failed to get data dir: %w", err)
+	}
+	credentialDir := filepath.Join(dataDir, "google")
+	if err := os.MkdirAll(credentialDir, 0700); err != nil {
+		return fmt.Errorf("failed to create credential dir: %w", err)
+	}
+	credentialFile := filepath.Join(credentialDir, "service_account_key")
+	if err := os.WriteFile(credentialFile, serviceAccountKey, 0600); err != nil {
+		return fmt.Errorf("failed to write service account key: %w", err)
+	}
+
+	creds := googleCredentials{
+		ProjectID: projectID,
+		Location:  location,
+	}
+	encoded, err := json.Marshal(creds)
+	if err != nil {
+		return fmt.Errorf("failed to marshal credentials: %w", err)
+	}
+	return keyring.Set(keyringServiceName, "google", string(encoded))
 }
 
 func (p *GoogleProvider) LoadCredentials() (map[string]string, error) {
-	apiKey, err := keyring.Get(keyringServiceName, "google")
+	stored, err := keyring.Get(keyringServiceName, "google")
 	if err != nil {
 		return nil, fmt.Errorf("not logged in to Google")
 	}
-	return map[string]string{"api_key": apiKey}, nil
+
+	var creds googleCredentials
+	if err := json.Unmarshal([]byte(stored), &creds); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal credentials: %w", err)
+	}
+
+	dataDir, err := getDataDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get data dir: %w", err)
+	}
+	credentialFile := filepath.Join(dataDir, "google", "service_account_key")
+	serviceAccountKey, err := os.ReadFile(credentialFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read service account key: %w", err)
+	}
+
+	return map[string]string{
+		"service_account_key": base64.StdEncoding.EncodeToString(serviceAccountKey),
+		"project_id":          creds.ProjectID,
+		"location":            creds.Location,
+	}, nil
 }
 
 func (p *GoogleProvider) DeleteCredentials() error {
+	dataDir, err := getDataDir()
+	if err != nil {
+		return fmt.Errorf("failed to get data dir: %w", err)
+	}
+	credentialDir := filepath.Join(dataDir, "google")
+	if err := os.RemoveAll(credentialDir); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove credential dir: %w", err)
+	}
 	return keyring.Delete(keyringServiceName, "google")
 }
 
-func (p *GoogleProvider) Login(ctx context.Context, credentials map[string]string) error {
+func (p *GoogleProvider) Login(ctx context.Context, creds map[string]string) error {
 	if p.client != nil {
 		return nil
 	}
-	apiKey, ok := credentials["api_key"]
+	serviceAccountKeyB64, ok := creds["service_account_key"]
 	if !ok {
-		return fmt.Errorf("api_key not provided")
+		return fmt.Errorf("service_account_key not provided")
+	}
+	serviceAccountKey, err := base64.StdEncoding.DecodeString(serviceAccountKeyB64)
+	if err != nil {
+		return fmt.Errorf("failed to decode service account key: %w", err)
+	}
+	projectID, ok := creds["project_id"]
+	if !ok {
+		return fmt.Errorf("project_id not provided")
+	}
+	location, ok := creds["location"]
+	if !ok {
+		return fmt.Errorf("location not provided")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
+	authCreds, err := credentials.DetectDefault(&credentials.DetectOptions{
+		CredentialsJSON: serviceAccountKey,
+		Scopes:          []string{"https://www.googleapis.com/auth/cloud-platform"},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to detect credentials: %w", err)
+	}
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey: apiKey,
+		Project:     projectID,
+		Location:    location,
+		Backend:     genai.BackendVertexAI,
+		Credentials: authCreds,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create GenAI client: %w", err)
@@ -123,6 +228,7 @@ func (p *GoogleProvider) GenerateImage(ctx context.Context, model string, prompt
 	resp, err := p.client.Models.GenerateImages(ctx, model, prompt, &genai.GenerateImagesConfig{
 		NumberOfImages:   int32(GetModelSettingInt(settings, "number_of_images", 1)),
 		AspectRatio:      GetModelSettingString(settings, "aspect_ratio", "1:1"),
+		ImageSize:        GetModelSettingString(settings, "output_resolution", "1K"),
 		IncludeRAIReason: true,
 	})
 	if err != nil {
