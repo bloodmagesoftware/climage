@@ -23,6 +23,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -223,7 +225,7 @@ func (p *GoogleProvider) GenerateImage(ctx context.Context, model string, prompt
 			return nil, fmt.Errorf("failed to login to Google: %w", err)
 		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	resp, err := p.client.Models.GenerateImages(ctx, model, prompt, &genai.GenerateImagesConfig{
 		NumberOfImages:   int32(GetModelSettingInt(settings, "number_of_images", 1)),
@@ -243,7 +245,16 @@ func (p *GoogleProvider) GenerateImage(ctx context.Context, model string, prompt
 	nowDateTime := time.Now().Format(time.RFC3339)
 	var filePaths []string
 	for i, img := range resp.GeneratedImages {
+		if len(img.RAIFilteredReason) > 0 {
+			fmt.Printf("RAI Filtered: %s\n", img.RAIFilteredReason)
+		}
+		if img.Image == nil || len(img.Image.ImageBytes) == 0 {
+			continue
+		}
 		var ext string
+		if len(img.Image.MIMEType) == 0 {
+			img.Image.MIMEType = http.DetectContentType(img.Image.ImageBytes)
+		}
 		switch img.Image.MIMEType {
 		case "image/png":
 			ext = ".png"
@@ -252,6 +263,9 @@ func (p *GoogleProvider) GenerateImage(ctx context.Context, model string, prompt
 		case "image/gif":
 			ext = ".gif"
 		default:
+			if img.Image.MIMEType == "text/plain; charset=utf-8" {
+				log.Printf("Text outout: %s", string(img.Image.ImageBytes))
+			}
 			return nil, fmt.Errorf("unsupported image type: %q", img.Image.MIMEType)
 		}
 		filePath := filepath.Join(dir, fmt.Sprintf("%s_%x_%s", nowDateTime, i, ext))

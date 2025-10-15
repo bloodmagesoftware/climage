@@ -147,14 +147,19 @@ var rootCmd = &cobra.Command{
 				log.Println(prompt)
 				for _, filePath := range out {
 					fmt.Println(filePath)
-					ar := aspectRatio(filePath)
-					width := int(float64(40) * ar)
-					height := int(float64(40) / ar)
-					cmd := exec.Command("viu", "--width", fmt.Sprintf("%d", width), "--height", fmt.Sprintf("%d", height), filePath)
+					b := bounds(filePath)
+					var cmd *exec.Cmd
+					width := b.Dx()
+					height := b.Dy()
+					if width > height {
+						cmd = exec.Command("viu", "--width", "80", filePath)
+					} else {
+						cmd = exec.Command("viu", "--height", "25", filePath)
+					}
 					cmd.Stdin = os.Stdin
 					cmd.Stdout = os.Stdout
 					cmd.Stderr = os.Stderr
-					cmd.Run()
+					_ = cmd.Run()
 				}
 			}
 
